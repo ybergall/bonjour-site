@@ -2,27 +2,32 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-canonical_file="$repo_root/publichandlers/QRCodeInfo.ashx_QRkey=2AC0738C7AC95539B504D57849070A23&matricule=000458908/index_files/ulb_BUop_041s.jpg"
 shared_dir="$repo_root/publichandlers/shared"
 mkdir -p "$shared_dir"
 
-if [[ ! -f "$canonical_file" ]]; then
-  echo "Canonical image not found: $canonical_file" >&2
+# Keep a single canonical logo in one shared folder instead of one copy per generated page.
+canonical_file="$(find "$repo_root/publichandlers" -type f -iname 'ulb_*.jpg' ! -path "$shared_dir/*" | sort | head -n 1)"
+if [[ -z "$canonical_file" ]]; then
+  echo "No logo image found under $repo_root/publichandlers" >&2
   exit 1
 fi
 
 cp "$canonical_file" "$shared_dir/ulb-logo.jpg"
 
-# Rewrite each generated page to reuse the same image instead of keeping one copy per folder.
-find "$repo_root/publichandlers" -path '*/index.html' -type f | while IFS= read -r file; do
-  if [[ "$file" == "$shared_dir"/* ]]; then
-    continue
-  fi
-
+# Rewrite every generated page to use the same shared asset.
+find "$repo_root/publichandlers" -path '*/index.html' -type f ! -path "$shared_dir/*" -print0 | while IFS= read -r -d '' file; do
   perl -0pi -e 's#src="[^"]*ulb_[^"]*\.jpg"#src="../shared/ulb-logo.jpg"#g' "$file"
   perl -0pi -e 's#src="[^"]*ulb_[^"]*\.jpg"#src="../shared/ulb-logo.jpg"#g' "$file"
 done
 
-echo "Shared logo installed at $shared_dir/ulb-logo.jpg"
-echo "All generated pages now point to the shared asset."
+# Remove the duplicate JPG files after all pages point to the shared one.
+find "$repo_root/publichandlers" -type f -iname '*.jpg' ! -path "$shared_dir/*" -delete
+find "$repo_root/publichandlers" -type d \( -name '*_files' -o -name 'index_files' \) -empty -delete
+
+# Best-effort cleanup: if any leftover page still references a local JPG, strip it.
+find "$repo_root/publichandlers" -path '*/index.html' -type f ! -path "$shared_dir/*" -print0 | while IFS= read -r -d '' file; do
+  perl -0pi -e 's#src="[^"]*\.jpg"#src="../shared/ulb-logo.jpg"#g' "$file"
+done
+
+printf 'Shared logo installed at %s\n' "$shared_dir/ulb-logo.jpg"
+printf 'Duplicate JPG files removed from generated pages.\n'
